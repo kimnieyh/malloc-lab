@@ -41,7 +41,7 @@ team_t team = {
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
-
+#define MAX(x,y) ((x) > (y) ? (x):(y))
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 #define WSIZE   4
@@ -57,12 +57,19 @@ team_t team = {
 
 #define NEXT_BLKP(bp)   ((char *)(bp) + GET_SIZE(((char *)(bp)-WSIZE)))
 #define PREV_BLKP(bp)   ((char *)(bp) - GET_SIZE(((char *)(bp)-WSIZE)))
+
+// Declaration
+static void *heap_listp;
+static void *extend_heap(size_t words);
+static void *coalesce(void *bp);
+static void *find_fit(size_t a_size);
+static void place(void *bp, size_t a_size);
+
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
-    void *heap_listp;
     if((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
         return -1;
     PUT(heap_listp,0);
@@ -110,7 +117,7 @@ static void *extend_heap(size_t words){
     
     PUT(HDRP(bp),PACK(size,0));
     PUT(FTRP(bp),PACK(size,0));
-    put(HDRP(NEXT_BLKP(bp)),PACK(0,1));
+    PUT(HDRP(NEXT_BLKP(bp)),PACK(0,1));
 
     return coalesce(bp);
 }
@@ -121,21 +128,68 @@ static void *extend_heap(size_t words){
  */
 void *mm_malloc(size_t size)
 {
-    int newsize = ALIGN(size + SIZE_T_SIZE);
-    void *p = mem_sbrk(newsize);
-    if (p == (void *)-1)
-	return NULL;
-    else {
-        *(size_t *)p = size;
-        return (void *)((char *)p + SIZE_T_SIZE);
+    size_t asize;
+    size_t extendsize;
+    char *bp;
+
+    if(size == 0){
+        return NULL;
     }
+
+    if(size <= DSIZE){
+        asize = 2*DSIZE;
+    }else{
+        //todo align 으로 해보고 안되면 다시 수정 예정
+        asize = ALIGN(size);
+    }
+
+    if((bp = find_fit(asize))!= NULL){
+        place(bp,asize);
+        return bp;
+    }
+
+    extendsize = MAX(asize,CHUNKSIZE);
+    if ((bp = extend_heap(extendsize/WSIZE))==NULL){
+        return NULL;
+    }
+    place(bp,asize);
+    return bp;
 }
 
+static void *find_fit(size_t asize){
+    void *bp;
+    for (bp=heap_listp;GET_SIZE(HDRP(bp))> 0 ; bp = NEXT_BLKP(bp)){
+        if(!GET_ALLOC(HDRP(bp))&&(asize <=GET_SIZE(HDRP(bp)))){
+            return bp;
+        }
+    }
+    return NULL;
+}
+//최소 블록 크기는 16바이트 (헤더,푸터 4바이트 씩이고, 주소는 8의 배수여야 되기 때문)
+static void place(void *bp, size_t asize){
+    size_t csize = GET_SIZE(HDRP(bp));
+
+    if ((csize-asize) >= (2*DSIZE)){
+        PUT(HDRP(bp),PACK(asize,1));
+        PUT(FTRP(bp),PACK(asize,1));
+        bp = NEXT_BLKP(bp);
+        PUT(HDRP(bp),PACK(csize-asize,0));
+        PUT(FTRP(bp),PACK(csize-asize,0));
+    }else{
+        PUT(HDRP(bp),PACK(csize,1));
+        PUT(HDRP(bp),PACK(csize,1));
+    }
+    
+}
 /*
  * mm_free - Freeing a block does nothing.
  */
 void mm_free(void *ptr)
 {
+    size_t size = GET_SIZE(HDRP(ptr));
+    PUT(HDRP(ptr),PACK(size,0));
+    PUT(FTRP(ptr),PACK(size,0));
+    coalesce(ptr);
 }
 
 /*
