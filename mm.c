@@ -78,11 +78,26 @@ int mm_init(void)
     
     heap_listp += DSIZE;
     free_listp = heap_listp;
+
+    if(extend_heap(4)==NULL){
+        return -1;
+    }
     if(extend_heap(CHUNKSIZE/DSIZE)== NULL)
     {
         return -1;
     }
     return 0;
+}
+
+static void print_freelist() {
+    void *p = free_listp;
+    int idx = 0;
+    while (p != NULL) {
+        printf("%d free block: %p\n", idx, p);
+        printf("%d \n",(char *)p-heap_listp);
+        p = NEXT_FREEP(p);
+        idx++;
+    }
 }
 
 static void remove_in_freelist(void *bp)
@@ -235,13 +250,35 @@ static void place(void *bp, size_t asize)
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp),PACK((csize-asize),0));
         PUT(FTRP(bp),PACK((csize-asize),0));
-        insert_in_freelist(bp);
+        coalesce(bp);
     }else
     {
         PUT(HDRP(bp),PACK(csize,1));
         PUT(FTRP(bp),PACK(csize,1));
          
     }
+}
+
+size_t get_move_size(void *ptr)
+{
+    size_t prev_alloc = GET_ALLOC(HDRP(PREV_BLKP(ptr)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));
+    size_t size = GET_SIZE(HDRP(ptr));
+
+
+    if(prev_alloc && next_alloc){
+        return size;
+    }else if (!prev_alloc && next_alloc)
+    {
+        return size + GET_SIZE(HDRP(PREV_BLKP(ptr)));
+    }else if (prev_alloc && !next_alloc)
+    {
+        return size + GET_SIZE(HDRP(NEXT_BLKP(ptr)));
+    }else {
+        return size + GET_SIZE(HDRP(PREV_BLKP(ptr))) + GET_SIZE(HDRP(NEXT_BLKP(ptr)));
+    }
+    
+    
 }
 
 void *mm_realloc(void *ptr, size_t size)
@@ -256,22 +293,58 @@ void *mm_realloc(void *ptr, size_t size)
     {
         return mm_malloc(size);
     }
-
-    void *newp = mm_malloc(size);
-
-    if(newp ==NULL)
-    {
-        return 0;
-    }
     size_t oldsize = GET_SIZE(HDRP(ptr));
+    size_t newsize = DSIZE*((size + DSIZE + (DSIZE-1))/DSIZE);
+    size_t movesize = get_move_size(ptr);
+    if(movesize >= newsize) {
+        if(!GET_ALLOC(HDRP(PREV_BLKP(ptr)))){ // prev가 free인 경우
+            if(!GET_ALLOC(HDRP(NEXT_BLKP(ptr)))) {
+                remove_in_freelist(NEXT_BLKP(ptr));
+            }
+            void *prev_ptr = PREV_BLKP(ptr);
+            // 여유가 있는 경우
+            if(movesize-(newsize) >= DSIZE*2){
+                remove_in_freelist(prev_ptr);
+                memmove(prev_ptr,ptr,oldsize);
+                PUT(HDRP(prev_ptr),PACK(newsize ,1));
+                PUT(FTRP(prev_ptr),PACK(newsize ,1));
+                PUT(HDRP(NEXT_BLKP(prev_ptr)),PACK(movesize -(newsize),0));
+                PUT(FTRP(NEXT_BLKP(prev_ptr)),PACK(movesize -(newsize),0));
+                insert_in_freelist(NEXT_BLKP(prev_ptr));
+            }else{
+                remove_in_freelist(prev_ptr);
+                memmove(prev_ptr,ptr,oldsize);
+                PUT(HDRP(prev_ptr),PACK(movesize,1));
+                PUT(FTRP(prev_ptr),PACK(movesize,1));
+            }
+            return prev_ptr;
+        }else { //next만 늘려 줄 경우는 memmove 할 필요 없음
+            if(!GET_ALLOC(HDRP(NEXT_BLKP(ptr))))
+                remove_in_freelist(NEXT_BLKP(ptr));
+            // 여유가 있는 경우
+            if(movesize-(newsize) >= DSIZE*2){
+                PUT(HDRP(ptr),PACK(newsize,1));
+                PUT(FTRP(ptr),PACK(newsize,1));
+                PUT(HDRP(NEXT_BLKP(ptr)),PACK(movesize -(newsize),0));
+                PUT(FTRP(NEXT_BLKP(ptr)),PACK(movesize -(newsize),0));
+                insert_in_freelist(NEXT_BLKP(ptr));
+            }else {
+                PUT(HDRP(ptr),PACK(movesize,1));
+                PUT(FTRP(ptr),PACK(movesize,1));
+            }
+            return ptr;
+        }
+    }else {
+        void *newp = mm_malloc(size);
 
-    if(size < oldsize)
-    {
-        oldsize = size;
+        if(newp ==NULL)
+        {
+            return 0;
+        }
+
+        memcpy(newp,ptr,oldsize);
+        mm_free(ptr);
+
+        return newp;
     }
-
-    memcpy(newp,ptr,oldsize);
-    mm_free(ptr);
-
-    return newp;
 }
