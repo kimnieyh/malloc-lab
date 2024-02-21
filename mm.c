@@ -41,6 +41,7 @@ team_t team = {
 #define CHUNKSIZE   (1<<12)
 
 #define MAX(x,y)        (x > y ? x : y)
+#define MIN(x,y)        (x < y ? x : y)
 #define GET(p)          (*(unsigned int *) (p))
 #define PUT(p,value)    (*(unsigned int *) (p) = (value))
 #define PACK(size,alloc)(size | alloc)
@@ -228,13 +229,21 @@ static void *find_fit(size_t asize)
 {
    char *bp;
    bp = free_listp;
+   char *best_bp;
+   size_t min_diff = pow(2,31)-1; // 큰 수 
 
    for (bp; GET_ALLOC(HDRP(bp)) != 1; bp = NEXT_FREEP(bp))
    {    
         if (GET_SIZE(HDRP(bp)) >= asize)
         {
-            return bp;
+            if(MIN(min_diff,GET_SIZE(HDRP(bp))- asize) == (GET_SIZE(HDRP(bp))- asize)){
+                best_bp = bp;
+                min_diff = GET_SIZE(HDRP(bp))- asize;
+            }
         }    
+   }
+   if(min_diff != pow(2,31)-1){
+        return best_bp;
    }
    return NULL;
 }
